@@ -29,11 +29,13 @@ PROVIDED COMMAND LINE INTERFACE programs :
 
  Please try : 
 
-   saikoro  
-   saikoro -g 12x5 
-   saikoro -g 12x5 -s123 
-   saikoro -g 12x5 -s123 | csel -d 3 
-   saikoro -g 12x5 -s123 | transpose
-   saikoro -g 12x5 -s123 | latextable 
-   saikoro -g 12x5 -s123 | latextable -Cmn
-   latextable    # After opening some Excel or SQL ouput files, and copy and paste it.
+```bash
+saikoro  
+saikoro -g 12x5 
+saikoro -g 12x5 -s123 
+saikoro -g 12x5 -s123 | csel -d 3 
+saikoro -g 12x5 -s123 | transpose
+saikoro -g 12x5 -s123 | latextable 
+saikoro -g 12x5 -s123 | latextable -Cmn
+latextable    # After opening some Excel or SQL ouput files, and copy and paste it.
+```
