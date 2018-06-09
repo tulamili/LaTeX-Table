@@ -1,6 +1,6 @@
-#!/usr/bin/perl -t
+#!/usr/bin/perl -T
 use v5.14 ; use strict ; use warnings ; # cpantersのレポートによると、5.14より前はNAだった。
-use Getopt::Std ; getopts q['/:=_0:13:9C:fjm:psw:x:H:] , \my%o ; # 5.
+use Getopt::Std ; getopts q['/:=_$0:13:9C:fjm:psw:x:H:] , \my%o ; # 5.
 use utf8 ; # v5.6 ~ 
 use Encode qw[ encode_utf8 decode_utf8 ] ; # v5.7 ~ 
 use Term::ANSIColor qw [:constants ] ; $Term::ANSIColor::AUTORESET = 1 ; # v5.6 ~ 
@@ -55,70 +55,59 @@ sub plain2latex ( $ ) {
 
 sub main ( ) { 
 
-    my $zflag = 0 ; 
-    
+    my $zflag = 0 ; # 全角空白の存在フラグ ; $ex{' '} のようにもっと柔軟にしたいかも
+    my $maxF = 1 ; # フィールド数の最大値 ; 0 では無くて1とした訳は全て空行でも \begin{tabular}[l] とlが最低1個は必要なため
+    my $tailF = $o{'$'} ? $o{w} : -1 ; 
 
-    # オプション -3 についての処理
-    @r3 = split /,/, $o{3} , -1  if $o{3} ;
-
-    for ( reverse 0 .. $#r3 ) {         
-        splice @r3, $_ , 1 , $1 .. $2 if $r3[$_] =~ m/(\d+)\.\.(\d+)/
-    }
+    @r3 = split /,/, $o{3} , -1  if $o{3} ;    # オプション -3 についての処理
+    do { splice @r3, $_ , 1 , $1 .. $2 if $r3[$_] =~ m/(\d+)\.\.(\d+)/ } for reverse 0 .. $#r3  ;
     grep { $_ -- } @r3 ; 
-
 
     binmode STDOUT, ":utf8" ;
     $SIG{ALRM} = sub { print STDERR CYAN "Please enter a tabular text in TSV format..\n" if -t } ;
     alarm 3 ;
+    my $alF = 1 ; # alarm を立てたり下ろしたりしたことを表すフラグ
     while ( <> ) {
-    	alarm 0 ;
+    	alarm 0 if $alF && $alF -- ; # <- if を使うことで sleep 0の3マイクロ秒くらい消費を 0.03マイクロ秒に縮まる
         chomp ; 
-        if ( $o{s} ) { 
-        	s/\s*$//  ; # -s 指定で末尾の空白文字を取り除く。
-        	if (/^$/) { 
-        		$. -- ; 
-        		next ;
-        	} ; 
-        }
-
-        $_ = decode_utf8 ($_) ;
+        do  { s/\s*$// ; if (/^$/) { $. -- ; next } } if $o{s} ; # -s 指定により末尾の空白文字を取り除く。
+        $_ = decode_utf8 ( $_ ) ; # <-　括弧が外せるか確認
         $zflag = 1 if m/　/ ; #全角空白 \x{3000} のチェック
-        my @F = split /$isep/ , plain2latex ( $_ )  , -1 ;   # <--- ここでコアとなる処理
+        my @F = split /$isep/ , plain2latex ( $_ ) , $tailF ;   # <--- ここでコアとなる処理
         splice @F , $o{w} if defined $o{w} ; # 列数の最大値が指定された場合の、切り取りの処理。
-        grep { s/$rm//} @F[ ($o{1} ? 1:0) .. $#F]  if defined $o{0} && $. >= ($o{'='} ? 1 :0  )  ;
-        my @t3 = grep { $_ < @F } @r3 ; 
-        $. > 1 || ! $o{'='} and s/(?<=\d)(?=(\d\d\d)+($|\D))/,/g for @F[ @t3 ]  ; # 数値3桁区切りの処理
-
+        $maxF = @F if @F > $maxF ;
+        grep { s/$rm//} @F[ $o{1} // 0 .. $#F ] if defined $o{0} and $. > 1 || ! $o{'='} ; # -0の処理
+        grep { s/(?<=\d)(?=(\d\d\d)+($|\D))/,/g } @F[ (grep{$_< scalar @F} @r3) ]  if $. > 1 || ! $o{'='} ; # 数値3桁区切りの処理
         grep { $_ = "\\rotatebox{90}{$_}"} @F if $o{q[']} and $. == 1 ; # 先頭行を回転したい場合。
-        push @out, tableStart ( scalar @F ) if $. == 1 ;  
         push @out,  ' ' x 12 . (join ' & ' , @F  ) . "\\\\" , "\n" ;
         push @out,  ' ' x 12 , "\\hline\n" if $o{'='} && $.== 1 ; # 1行目と2行目に横の罫線を入れる。
-    }
-    push @out, tableStart ( 1 ) if $. == 0 ; # 何も入力が無い場合の処理だったよう..
-    push @out, tableEnding( int rand() * 1000000) ; 
-    print STDERR GREEN "$. lines are read.\n" ;
-    grep { s/^\s*\%.*$//gm ; s/\n+/\n/g } @out if $o{p} ;
+    } # while (<>)の終わり
+    unshift @out, tableStart ( $maxF ) if ! exists $o{C} ; 
+    push @out, tableEnding( int rand() * 1e6 ) if ! exists $o{C} ; # 1e5だけならばテーブル300個くらいで衝突が半分の確率で発生
+    print STDERR GREEN "$. lines are read and accepted.\n" ;
+    grep { s/^\s*\%.*$//gm ; s/\n+/\n/g } @out if $o{p} ; # -p 指定によりLaTeXでコメントアウトされた行は出力抑制
 
     if ( exists $o{C} ) {
     	for ( @out ) { 
-    		if ( m/./ ) { 
-    			s|\Q\\\E||g if $o{C} =~ /n/i ; 
-    			s|^            || ; 
-    			$_ = "\\mbox{$_}" if $o{C} =~ /m/i ; 
-    			$_ .= "\\newline" if $o{C} =~ /n/i ;  
-    			$_ = "\\hspace*{$o{x}}$_" if $o{C} =~ /h/i ;  
-    		}
+            next if ! m/./ ; 
+            s|^            || ; 
+            $_ = "\\hspace*{$o{x}}$_" if $o{C} =~ /h/i ;  # -C h : 左右にずらす。マイナスの長さで左にずれる。
+            $_ = "\\mbox{$_}" if $o{C} =~ /m/i ; # -C m  : 各行を mbox{ .. }　と囲む。
+            do { s|\Q\\\E||g ; $_ .= "\\newline" } if $o{C} =~ /n/i ;   # -C n : 改行を \newlineに変換
+            s|\Q\\\E||g if $o{C} =~ /0/i ; # -C 0 : 改行を除去する
     	}
 	}
     print @out ; 
 
-    print STDERR BLUE 'Note: "\usepackage{graphicx}" is required before "\begin{document}" in the LaTeX file to use "\rotatebox" and "\scalebox" commands.' , "\n" if !$o{p} ;
+    print STDERR BRIGHT_BLUE << 'END' , "\n" if !$o{p} ;
+Note: "\usepackage{graphicx}" is required before "\begin{document}" in the LaTeX file to use "\rotatebox" and "\scalebox" commands.
+Also "\usepackage[]{otf}" may be required. 
+END
     print STDERR CYAN "Full-width space included. Using the option '-_' is advisable.\n" if $zflag && ! $o{'_'} ;
 }
 
 sub tableStart ( $ ) { 
-	return () if exists $o{C} ; 
-    my @tmp  = ('l') x ( $o{w} // $_[0] ) ;  # 列指定
+    my @tmp  = ('l') x ( $_[0] ) ;  # 列指定
     $tmp [$_] = 'r' for @r3 ; 
     splice @tmp , $_ * 5 , 0 , ' ' for reverse 1 .. @tmp/5 ; # 列指定に5列ごとに空白文字を入れる。
     splice @tmp , 1 , 0 , " | " if $o{1} ; # 縦線を入れる指定 
@@ -139,7 +128,6 @@ END
 }
 
 sub tableEnding ( $ ) {
-	return () if exists $o{C} ; 	
     my $out =  << "END" ; 
             \\hline
         \\end{tabular} 
@@ -214,7 +202,9 @@ sub HELP_MESSAGE {
  Options :     
     -/ REGEX : Specifying the input delimter. Default is tab character. You can specify as -/ ,  for pseudo-CSV.
     -=   : To indicate that the first line in STDIN is the header, to yield "\hline" btw. 1st and 2nd lines.
-    -w N : To explicitly indicate that the table has N columns. (Else, automatically determined by 1st line)
+    -w N : Specification of the max number of columns. The columns over this limit will be neglected.
+    -$   : -\$ の指定によりあふれた列は、列を増やさずに残すこと指定。
+
     -j   : For Japanese half-width character. The LaTeX output utilize \scalebox{0.5}[1]{...}
     -s N : N is the displaying magnifying factor. Often used for large-size table to reduce the physical size.
     -_   : To emphasize the space character. Both for half-width \x{20} and full-width \x{3000}.
@@ -265,7 +255,8 @@ sub HELP_MESSAGE {
 オプション : 
     -/ REGEX :  区切り文字を 正規表現で指定する。単純なコンマ区切りであれば、-/ , と指定。未指定ならタブ文字。
     -=   : 標準入力の最初の行は、作りたいテーブルのヘッダであると仮定する。(\hlineの処理と-0の処理に関わる)
-    -w N : 表が幅何列かを明示的に指定する。未指定なら先頭行の列数で判定する。
+    -w N : 表の最大の列数を指定。それを超えた列は出力に反映されない。
+    -$   : -\$ の指定によりあふれた列は、列を増やさずに残すこと指定。
     -j   : 日本語の半角カナに対応する。
     -m N : 出力の拡大率を指定する。未指定なら 1.0。
     -_   : 全角スペース(UTF8)と半角スペース及び全角ハイフンについて、LaTeXの出力結果において、分かる様にする。
@@ -299,6 +290,6 @@ sub HELP_MESSAGE {
    * 逆にLaTeXのテーブルからTSVファイルに変換する機能を -~のオプションスイッチで実装したい。
 
 # このブログラムは 2018年2月9日(金)から表形式データに対する道具作りの一環として、下野寿之が作成したものである。
-# このプログラムファイルに最後に手を加えたのは、2018年6月3日(日)である。
+# このプログラムファイルに最近手を加えたのは、2018年6月3日(日), 6月9日(土)である。
 =end JapaneseManual
 =cut
