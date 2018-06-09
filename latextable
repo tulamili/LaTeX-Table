@@ -1,6 +1,6 @@
 #!/usr/bin/perl -T
 use v5.14 ; use strict ; use warnings ; # cpantersのレポートによると、5.14より前はNAだった。
-use Getopt::Std ; getopts q['/:=_$0:13:9C:fjm:psw:x:H:] , \my%o ; # 5.
+use Getopt::Std ; getopts q['$/:=_#:0:13:9C:fjm:psw:x:H:] , \my%o ; # 5.
 use utf8 ; # v5.6 ~ 
 use Encode qw[ encode_utf8 decode_utf8 ] ; # v5.7 ~ 
 use Term::ANSIColor qw [:constants ] ; $Term::ANSIColor::AUTORESET = 1 ; # v5.6 ~ 
@@ -12,6 +12,12 @@ my $colspec = '' ; # LaTeXのtable環境の列指定  LaTeX table environment "c
 my $rm = $o{0} if defined $o{0} ; # テーブルの値で除去対象となる値の正規表現
 my %del ; # LaTeXで使わないコマンドの指定。
 my @r3 = () ; #  3桁コンマ区切りにして右寄せにしたい列の指定。 Which columns are to be decimal being separated every 3 digits.
+
+# 追加の水平線と垂直線
+my $HL = ! exists $o{'#'} ? '' : $o{'#'} =~ /1/ ? "\\hline" : $o{'#'} =~ m/\./ ? "\\hdashline[1pt/1pt]" : '' ;
+my $VL = ! exists $o{'#'} ? '' : $o{'#'} =~ /1/ ? '|' : $o{'#'} =~ /\./ ? ';{1pt/1pt}' : ' ' ;
+
+
 my $angle = $o{9} ? 90 : 0 ; # 全体を回転する場合の指定  When -9 is specified, the entire table rotates in 90 degree.
 
 my @out ; # $0の出力文字列  The output of this command is accumulated in this variable. 
@@ -24,6 +30,7 @@ sub plain2latex ( $ ) {
 
 	my $hlen = $o{H} if defined $o{H} ;  # ハッシュ値のような16進数の文字列を長い場合に $hlen桁に縮めて .. を続ける。
     s/(?<=[0-9a-f]{$hlen})[0-9a-f]+/../gi if defined $o{H} ; # <-- - (?<= ) で正規表現の後読み
+
 
     # ドル$文字関連 The pre-processing of the character "$ dollar". The completion process will appear much later.
     s|\G(.*?)\$|$1=\$\$=|g ; # ドル文字の前処理。\Gは文字列の先頭、もしくは修飾子 g がついたパターンマッチングが終了した場所を記憶しておき、そこにマッチ
@@ -50,6 +57,9 @@ sub plain2latex ( $ ) {
         y/ﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝﾞﾟ/タチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン゛゜/ ;
     }
 
+    # 半角ハイフンで連続しているものの処理
+    s/-(?=-)/-{}/g ;
+
     return $_ ;
 }
 
@@ -58,6 +68,7 @@ sub main ( ) {
     my $zflag = 0 ; # 全角空白の存在フラグ ; $ex{' '} のようにもっと柔軟にしたいかも
     my $maxF = 1 ; # フィールド数の最大値 ; 0 では無くて1とした訳は全て空行でも \begin{tabular}[l] とlが最低1個は必要なため
     my $tailF = $o{'$'} ? $o{w} : -1 ; 
+    my $HS  = ' ' x 12 ; # 出力行の先頭のスペース。レイアウトをきれいにするため
 
     @r3 = split /,/, $o{3} , -1  if $o{3} ;    # オプション -3 についての処理
     do { splice @r3, $_ , 1 , $1 .. $2 if $r3[$_] =~ m/(\d+)\.\.(\d+)/ } for reverse 0 .. $#r3  ;
@@ -79,9 +90,11 @@ sub main ( ) {
         grep { s/$rm//} @F[ $o{1} // 0 .. $#F ] if defined $o{0} and $. > 1 || ! $o{'='} ; # -0の処理
         grep { s/(?<=\d)(?=(\d\d\d)+($|\D))/,/g } @F[ (grep{$_< scalar @F} @r3) ]  if $. > 1 || ! $o{'='} ; # 数値3桁区切りの処理
         grep { $_ = "\\rotatebox{90}{$_}"} @F if $o{q[']} and $. == 1 ; # 先頭行を回転したい場合。
-        push @out,  ' ' x 12 . (join ' & ' , @F  ) . "\\\\" , "\n" ;
-        push @out,  ' ' x 12 , "\\hline\n" if $o{'='} && $.== 1 ; # 1行目と2行目に横の罫線を入れる。
+        push @out,  $HS . (join ' & ' , @F  ) . "\\\\" , "\n" ;
+        push @out,  $HS , "\\hline\n" if $o{'='} && $.== 1 ; # 1行目と2行目に横の罫線を入れる。
+        push @out , $HS.$HL."\n" if $HL ne '' and ! ( $o{1} && $. == 1 ) ;
     } # while (<>)の終わり
+    pop @out if $HS ne '' ; # -\# が指定されているときに、最後の 横罫線は取り消す。
     unshift @out, tableStart ( $maxF ) if ! exists $o{C} ; 
     push @out, tableEnding( int rand() * 1e6 ) if ! exists $o{C} ; # 1e5だけならばテーブル300個くらいで衝突が半分の確率で発生
     print STDERR GREEN "$. lines are read and accepted.\n" ;
@@ -90,7 +103,7 @@ sub main ( ) {
     if ( exists $o{C} ) {
     	for ( @out ) { 
             next if ! m/./ ; 
-            s|^            || ; 
+            s|^$HS|| ; 
             $_ = "\\hspace*{$o{x}}$_" if $o{C} =~ /h/i ;  # -C h : 左右にずらす。マイナスの長さで左にずれる。
             $_ = "\\mbox{$_}" if $o{C} =~ /m/i ; # -C m  : 各行を mbox{ .. }　と囲む。
             do { s|\Q\\\E||g ; $_ .= "\\newline" } if $o{C} =~ /n/i ;   # -C n : 改行を \newlineに変換
@@ -99,9 +112,14 @@ sub main ( ) {
 	}
     print @out ; 
 
-    print STDERR BRIGHT_BLUE << 'END' , "\n" if !$o{p} ;
+    print STDERR BRIGHT_BLUE << 'END'  if !$o{p} && ! exists $o{C} ;
 Note: "\usepackage{graphicx}" is required before "\begin{document}" in the LaTeX file to use "\rotatebox" and "\scalebox" commands.
-Also "\usepackage[]{otf}" may be required. 
+END
+    print STDERR BRIGHT_BLUE << 'END'  ;
+Also "\usepackage{otf}" may be required. 
+END
+    print STDERR BRIGHT_BLUE << 'END'  if defined $o{'#'} && $o{'#'} =~ /\./ ;
+Also "\usepackage{arydshln}" is required. 
 END
     print STDERR CYAN "Full-width space included. Using the option '-_' is advisable.\n" if $zflag && ! $o{'_'} ;
 }
@@ -109,6 +127,7 @@ END
 sub tableStart ( $ ) { 
     my @tmp  = ('l') x ( $_[0] ) ;  # 列指定
     $tmp [$_] = 'r' for @r3 ; 
+    grep { $_ .= $VL }  @tmp [ ($o{1}//0) .. $#tmp -1 ] ; # -\# で垂直線が入る処理
     splice @tmp , $_ * 5 , 0 , ' ' for reverse 1 .. @tmp/5 ; # 列指定に5列ごとに空白文字を入れる。
     splice @tmp , 1 , 0 , " | " if $o{1} ; # 縦線を入れる指定 
     $colspec = " | " . ( join '' , @tmp ) . " | " ;
@@ -270,6 +289,7 @@ sub HELP_MESSAGE {
     -p  : LaTeXの冗長なコメント文を出さないようにする。(Primitive)
     -s  : 行の末尾の空白文字を取り除く。そしてその結果空行になった場合も取り除く。入力に余計な空白文字が末尾につく場合に便利。
 
+    -\# str :　テーブル内の各行と各列に罫線を挿入する。 -\# 1 で実線、 -\# . により点線(\usepackage{arydshln} が必要)。
     -C [mnh]+ : 表組みではなくて、LaTeXのtable環境のcaption{}に使えるようにする。m,n,h を1つ以上組みあわせて指定。例: -C mh 
        -C m : 各行を mbox{}で囲む。 ; 
        -C n : 各行の行末に\newlineを付加する。 ; 
@@ -288,6 +308,7 @@ sub HELP_MESSAGE {
    * 列数が変わる場合に警告を出して、可能なら、空文字列で埋めるようにする。
    * 全角ハイフンが含まれていた場合に、usepackage{otf} が必要であることを表示する様にしたい。要LaTeX参考署参照。
    * 逆にLaTeXのテーブルからTSVファイルに変換する機能を -~のオプションスイッチで実装したい。
+   * 半角ハイフン2個以上を連続して入力した場合 -{}-{}-のように出力される必要があるが、未実装である。
 
 # このブログラムは 2018年2月9日(金)から表形式データに対する道具作りの一環として、下野寿之が作成したものである。
 # このプログラムファイルに最近手を加えたのは、2018年6月3日(日), 6月9日(土)である。
